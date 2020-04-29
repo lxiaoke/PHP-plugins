@@ -45,9 +45,9 @@ class FileUpload
     protected $file_ext = '';
 
     /**
-     * @var $type 文件类型，默认为图片类型
+     * @var $type 文件类型，默认为任意类型
      */
-    protected $type = 'image';
+    protected $type = 'file';
 
     protected const ERR_OK         = 0;
     protected const ERR_FILE_SIZE  = 1;
