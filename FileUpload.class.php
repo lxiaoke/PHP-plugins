@@ -5,22 +5,22 @@ namespace E;
 class FileUpload
 {
     /**
-     * @var $name 上传文件标记名
+     * @var String $name 上传文件标记名
      */
     protected $name = 'file';
 
     /**
-     * @var $ext 所允许的扩展名
+     * @var Array $ext 所允许的扩展名
      */
     protected $exts  = [];
 
     /**
-     * @var $file 上传的文件资源
+     * @var Resource $file 上传的文件资源
      */
     protected $file = null;
 
     /**
-     * @var $upload_success 是否上传成功标志
+     * @var Boolean $upload_success 是否上传成功标志
      */
     protected $upload_success = false;
 
@@ -49,6 +49,43 @@ class FileUpload
      */
     protected $type = 'file';
 
+    /**
+     * @var $path 文件保存路径，默认是当前文件夹
+     */
+    protected $path = __DIR__;
+
+    /**
+     * @var $allow_properties 允许修改的属性
+     */
+    protected $allow_properties = [ 'name', 'exts', 'max_size', 'path' ];
+
+    /**
+     * @var $exts_arr 文件后缀数组，键名为其大类型
+     */
+    protected $exts_arr = [
+        'image' => ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'ico', 'svg', 'tif', 'tiff', 'webp'],
+        'text'  => ['css', 'csv', 'htm', 'html', 'ics', 'js', 'mjs', 'txt'],
+        'audio' => ['aac', 'mid', 'midi', 'mp3', 'oga', 'wav', 'weba'],
+        'video' => ['avi', 'mpeg', 'ogv', 'webm', 'mp4'],
+        'app'   => [],
+        'zip'   => ['zip', 'rar', '7z'],
+        'font'  => [],
+        'file'  => [],
+    ];
+
+    /**
+     * @var $mime_prefix_arr Mime 大类型数组
+     */
+    protected $mime_type_arr = [
+        'image' => 'image',
+        'text'  => 'text',
+        'audio' => 'audio',
+        'video' => 'video',
+        'font'  => 'font',
+        'app'   => 'application',
+        'zip'   => 'application',
+    ];
+
     protected const ERR_OK         = 0;
     protected const ERR_FILE_SIZE  = 1;
     protected const ERR_FORM_SIZE  = 2;
@@ -68,36 +105,30 @@ class FileUpload
     public function config($arr)
     {
         foreach ($arr as $key => $val) {
-            if (property_exists($this, $key)) {
+            // 如果 $key 在允许修改的属性数组内并且类中存在 $key 属性，修改属性 $key
+            if (in_array($key, $this->allow_properties) && property_exists($this, $key)) {
                 $this->$key = $val;
             }
         }
+        $this->exts = $this->exts ?: $this->getExtsByType();
+
         return $this;
     }
 
     /**
-     * 进行文件上传操作
+     * 进行文件上传操作，只是对上传文件进行初步的判断，没有进行文件的移动
      *
      * @return E\FileUpload
      */
     public function upload()
     {
+        // 获取上传文件和文件后缀
         $this->file     = $this->getFile();
         $this->file_ext = strrchr($this->file['name'], '.');
 
         $this->upload_success = !($this->uploadError() || $this->overMaxSize() || $this->notAllowType());
 
         return $this;
-    }
-
-    /**
-     * 判断文件是否上传成功
-     * 
-     * @return boolean
-     */
-    public function uploadSuccess()
-    {
-        return $this->upload_success;
     }
 
     /**
@@ -108,28 +139,32 @@ class FileUpload
      *
      * @return boolean
      */
-    public function save($path, $file_name = '')
+    public function save($path = '', $file_name = '')
     {
-        if (!$this->uploadSuccess()) {
+        // 判断在上传阶段是否出现错误，如果没有上传成功，返回 false
+        if (!$this->upload_success) {
             return false;
         }
 
+        $path = $path ?: $this->path;
         // 判断文件夹是否存在，如果不存在，新建一个文件夹
         if (!is_dir($path)) {
             mkdir($path);
         }
 
-        // 获取文件名，不包含后缀
+        // 获取文件名，不包含后缀，如果没有设置，则自动生成 e_ + 当前时间时间戳 + 5位随机数
         $file_name = $file_name ?: 'e_' . time() . mt_rand(10000, 99999);
 
+        // 连接路径、文件名、后缀
         $file = rtrim($path, '/') . '/' . $file_name . $this->file_ext;
 
-        // 判断文件是否存在
+        // 判断文件是否存在，如果文件已经存在，返回 false
         if (file_exists($file)) {
             $this->error_code = self::ERR_FILE_EXIST;
             return false;
         }
 
+        // 移动文件
         if (move_uploaded_file($this->file['tmp_name'], $file)) {
             return true;
         }
@@ -216,16 +251,21 @@ class FileUpload
     }
 
     /**
-     * 判断文件是否超出限制大小
+     * 判断文件是否超出限制大小,
+     * 超出限制大小返回 true，否则返回 false
      *
      * @return boolean
      */
     protected function overMaxSize()
     {
-        if ($this->file['size'] > $this->getMaxSize() * 1024 * 1024 * 8) {
+        // 将以 M 为单位的限制大小转换成 bit
+        $max_size_bit = $this->getMaxSize() * 1024 * 1024 * 8;
+
+        if ($this->file['size'] > $max_size_bit) {
             $this->error_code = self::ERR_FILE_SIZE;
             return true;
         }
+        
         return false;
     }
 
@@ -236,30 +276,65 @@ class FileUpload
      */
     protected function getExtsByType()
     {
-        $exts_arr = [
-            'image' => ['jpg', 'jpeg', 'png', 'gif'],
-            'file'  => [],
-            'zip'   => ['zip', 'rar', '7z']
-        ];
-
-        return $exts_arr[$this->type] ?? [];
+        return $this->exts_arr[$this->type] ?? [];
     }
 
     /**
-     * 判断是否是允许的类型
+     * 验证 Mime 类型，验证成功返回 true，失败返回 false
+     * 
+     * @param  string $file
+     * @return boolean
+     */
+    protected function validateMime($file)
+    {
+        $mime_type = $this->getMimeType($file);
+        if () {
+            //
+        }
+        return false;
+    }
+
+    /**
+     * 获取 Mime 类型
+     *
+     * @param  string $file
+     * @return string
+     */
+    protected function getMimeType($file)
+    {
+        // 创建一个 fileinfo 资源
+        $finfo = new finfo(FILEINFO_MIME);
+
+        // 创建资源成功，并且传入的文件存在
+        if ($finfo && file_exists($file)) {
+            $mime_info = $finfo->file($file);
+            $mime_arr  = explode('; ', $mime_info);
+
+            if ($mime_arr && is_array($mime_arr) && count($mime_arr)) {
+                return $mime_arr[0];
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 判断是否是允许的类型。
+     * 如果不允许上传，返回 true，否则返回 false
      * 
      * @return boolean
      */
     protected function notAllowType()
     {
-        $this->exts = $this->exts ?: $this->getExtsByType();
-
+        // 允许的后缀数组为空，说明是任意类型的文件，
+        // 因此直接返回 false，不进行后缀名的判断
         if (!$this->exts) return false;
 
         if (preg_match('/^\.' . implode('|', $this->exts) . '$/i', $this->file_ext)) {
             return false;
         }
 
+        // 后缀名验证未通过，返回 true
         $this->error_code = self::ERR_FILE_TYPE;
         return true;
     }
